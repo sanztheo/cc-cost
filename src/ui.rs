@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use ratatui::{
-    crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -74,26 +74,36 @@ fn run_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()
         terminal.draw(|f| draw(f, app))?;
         if event::poll(Duration::from_millis(250))? {
             if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
-                    KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => app.next_view(),
-                    KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => app.prev_view(),
-                    KeyCode::Char(c @ '1'..='5') => app.set_view_digit(c),
-                    KeyCode::Char(']') | KeyCode::Char('+') => app.cycle_window(1),
-                    KeyCode::Char('[') | KeyCode::Char('-') => app.cycle_window(-1),
-                    KeyCode::Char('w') => app.toggle_gran(),
-                    KeyCode::Down | KeyCode::Char('j') => app.scroll_down(),
-                    KeyCode::Up | KeyCode::Char('k') => app.scroll_up(),
-                    _ => {}
+                if handle_key(app, key) {
+                    break;
                 }
             }
         }
     }
     Ok(())
+}
+
+/// Applique une touche à l'état. Retourne `true` s'il faut quitter.
+///
+/// Isolé du boucle d'événements pour être testable sans TTY (cf. tests).
+fn handle_key(app: &mut App, key: KeyEvent) -> bool {
+    if key.kind != KeyEventKind::Press {
+        return false;
+    }
+    match key.code {
+        KeyCode::Char('q') | KeyCode::Esc => return true,
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return true,
+        KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('n') => app.next_view(),
+        KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('p') => app.prev_view(),
+        KeyCode::Char(c @ '1'..='5') => app.set_view_digit(c),
+        KeyCode::Char(']') | KeyCode::Char('+') => app.cycle_window(1),
+        KeyCode::Char('[') | KeyCode::Char('-') => app.cycle_window(-1),
+        KeyCode::Char('w') => app.toggle_gran(),
+        KeyCode::Down | KeyCode::Char('j') => app.scroll_down(),
+        KeyCode::Up | KeyCode::Char('k') => app.scroll_up(),
+        _ => {}
+    }
+    false
 }
 
 fn draw(f: &mut Frame, app: &mut App) {
@@ -511,4 +521,85 @@ fn group_thousands(int: &str) -> String {
         out.push(*b as char);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::Window;
+    use crate::pricing::Family;
+    use crate::scan::{Record, ScanResult};
+    use chrono::NaiveDate;
+
+    fn test_app() -> App {
+        let rec = |day: (i32, u32, u32)| Record {
+            model: "claude-opus-4-7".to_string(),
+            family: Family::Opus,
+            day: NaiveDate::from_ymd_opt(day.0, day.1, day.2).unwrap(),
+            project: "/tmp/proj".to_string(),
+            input: 10,
+            output: 20,
+            cache_5m: 0,
+            cache_1h: 0,
+            cache_read: 100,
+            cost: 1.0,
+        };
+        App::build(ScanResult {
+            records: vec![rec((2026, 5, 30)), rec((2026, 5, 1))],
+            files: 1,
+            dropped_dupes: 0,
+            skipped: 0,
+            unknown_models: vec![],
+        })
+    }
+
+    fn press(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn keys_switch_views() {
+        let mut a = test_app();
+        assert_eq!(a.view, View::Overview);
+
+        handle_key(&mut a, press(KeyCode::Tab));
+        assert_eq!(a.view, View::Models, "Tab doit passer à la vue suivante");
+
+        handle_key(&mut a, press(KeyCode::Char('3')));
+        assert_eq!(a.view, View::Timeline, "'3' doit sauter à Timeline");
+
+        handle_key(&mut a, press(KeyCode::Right));
+        assert_eq!(a.view, View::Projects, "→ doit avancer");
+
+        handle_key(&mut a, press(KeyCode::Left));
+        assert_eq!(a.view, View::Timeline, "← doit reculer");
+
+        handle_key(&mut a, press(KeyCode::Char('1')));
+        assert_eq!(a.view, View::Overview, "'1' doit revenir à Overview");
+    }
+
+    #[test]
+    fn brackets_change_window() {
+        let mut a = test_app();
+        assert_eq!(a.window, Window::All);
+        handle_key(&mut a, press(KeyCode::Char('[')));
+        assert_eq!(a.window, Window::D90, "'[' doit rétrécir la fenêtre");
+        handle_key(&mut a, press(KeyCode::Char(']')));
+        assert_eq!(a.window, Window::All, "']' doit élargir la fenêtre");
+    }
+
+    #[test]
+    fn w_toggles_granularity() {
+        let mut a = test_app();
+        handle_key(&mut a, press(KeyCode::Char('w')));
+        assert!(matches!(a.gran, crate::app::Gran::Weekly));
+    }
+
+    #[test]
+    fn q_and_esc_quit() {
+        let mut a = test_app();
+        assert!(handle_key(&mut a, press(KeyCode::Char('q'))));
+        assert!(handle_key(&mut a, press(KeyCode::Esc)));
+        assert!(!handle_key(&mut a, press(KeyCode::Char('x'))), "touche inconnue ne quitte pas");
+    }
 }

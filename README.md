@@ -69,13 +69,18 @@ cargo run -- --report     # plain-text report, no TUI
 cargo run -- --snapshot   # render all five views as text (works outside a TTY)
 ```
 
-For repeated use, build a release binary and call it directly:
+### Install as a global command
 
 ```bash
-cargo build --release
-./target/release/cc-cost              # TUI
-./target/release/cc-cost --report     # text report
-./target/release/cc-cost --snapshot   # text snapshot of all views
+cargo install --path .
+```
+
+This drops a `cc-cost` binary in `~/.cargo/bin` (already on your `PATH` if you use rustup), so you can run `cc-cost` from anywhere — no `cargo run`, no rebuild. Want a different name? Add a shell alias, e.g. `alias claude-cost="cc-cost"`.
+
+```bash
+cc-cost              # TUI, from any directory
+cc-cost --report     # text report
+cc-cost --snapshot   # text snapshot of all views
 ```
 
 The first run scans your local Claude Code data. On a ~2.6 GB transcript history this takes roughly 2 seconds thanks to parallel parsing.
@@ -86,12 +91,14 @@ Keybindings inside the TUI:
 
 | Key | Action |
 | --- | --- |
-| `Tab` / `←` `→` | Switch between views |
 | `1`–`5` | Jump directly to a view (Overview, Models, Timeline, Projects, Cache) |
+| `Tab` / `←` `→` / `n` `p` | Cycle between views |
 | `[` / `]` | Shrink / widen the time window (Today · 7d · 14d · 30d · 90d · All) |
 | `w` | Toggle Timeline granularity (daily / weekly) |
 | `j` / `k` | Scroll within the current view |
 | `q` | Quit |
+
+> Tip: if `Tab` and the arrow keys seem to do nothing, your terminal multiplexer (tmux, cmux, screen…) is intercepting them. The number keys `1`–`5` are never intercepted — use those to switch views.
 
 The selected time window applies to **every** view at once — pick `30d` and the totals, model breakdown, timeline, projects, and cache savings all recompute for the last 30 days. The Overview also keeps fixed all-time reference points (today / 7d / 30d) and a 30-day run-rate projection.
 

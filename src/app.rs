@@ -78,7 +78,7 @@ pub struct ProjectRow {
     pub agg: Agg,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
     Overview,
     Models,
@@ -106,7 +106,7 @@ impl View {
 }
 
 /// Fenêtre temporelle appliquée à toutes les vues, ancrée sur aujourd'hui.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Window {
     Today,
     D7,
