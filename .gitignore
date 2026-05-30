@@ -1,0 +1,9 @@
+# Rust
+/target
+
+# Données privées de validation (vrais tokens, noms de projets, username) — jamais publié
+/reference
+oracle_out.json
+
+# logs
+*.log
