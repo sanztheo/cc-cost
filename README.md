@@ -26,7 +26,7 @@ Five TUI views, switchable at any time:
 
 - **Overview** — total estimated cost, the period covered, total tokens, rolling windows (today / last 7 days / last 30 days), and how much the prompt cache saved you.
 - **Models** — cost broken down per model, sorted, with each model's share of the total as a percentage.
-- **Timeline** — a cost-per-day sparkline plus a per-day table, so you can see spikes and trends over time.
+- **Timeline** — a cost-per-day (or per-week) sparkline plus a table with running cumulative spend, so you can see spikes and trends over time.
 - **Projects** — cost grouped by project folder, to see which codebases are the expensive ones.
 - **Cache** — what percentage of input was served from cache, and the dollar amount the cache saved versus paying full input price.
 
@@ -88,8 +88,12 @@ Keybindings inside the TUI:
 | --- | --- |
 | `Tab` / `←` `→` | Switch between views |
 | `1`–`5` | Jump directly to a view (Overview, Models, Timeline, Projects, Cache) |
+| `[` / `]` | Shrink / widen the time window (Today · 7d · 14d · 30d · 90d · All) |
+| `w` | Toggle Timeline granularity (daily / weekly) |
 | `j` / `k` | Scroll within the current view |
 | `q` | Quit |
+
+The selected time window applies to **every** view at once — pick `30d` and the totals, model breakdown, timeline, projects, and cache savings all recompute for the last 30 days. The Overview also keeps fixed all-time reference points (today / 7d / 30d) and a 30-day run-rate projection.
 
 ### Where it looks
 

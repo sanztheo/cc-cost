@@ -12,7 +12,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, View};
+use crate::app::{Agg, App, View};
 
 // --- thème ---
 const ACCENT: Color = Color::Cyan;
@@ -31,22 +31,40 @@ pub fn run(mut app: App) -> Result<()> {
 /// Rend chaque vue une fois via un backend de test et l'imprime en texte.
 /// WHY : vérifier que le rendu ne panique pas et inspecter le layout hors TTY.
 pub fn snapshot(app: &mut App) -> Result<()> {
-    use ratatui::{backend::TestBackend, Terminal};
+    // Vérif filtrage fenêtre : les totaux doivent croître Today ≤ … ≤ All.
+    println!("=== totaux par fenêtre (doivent croître) ===");
+    for w in crate::app::Window::ALL {
+        app.set_window(w);
+        println!("  {:<12} {:>12}  ({} jours actifs)", w.label(), fmt_usd(app.total.cost), app.active_days());
+    }
+    app.set_window(crate::app::Window::All);
+
     for v in View::ALL {
         app.view = v;
         app.selected = 0;
-        let mut term = Terminal::new(TestBackend::new(118, 34))?;
-        term.draw(|f| draw(f, app))?;
-        let buf = term.backend().buffer().clone();
-        println!("\n========== VUE : {} ==========", v.title());
-        let area = buf.area();
-        for y in 0..area.height {
-            let mut line = String::new();
-            for x in 0..area.width {
-                line.push_str(buf[(x, y)].symbol());
-            }
-            println!("{}", line.trim_end());
+        dump(app, v.title())?;
+    }
+
+    // Timeline en granularité semaine (exerce l'autre chemin de rendu).
+    app.view = View::Timeline;
+    app.toggle_gran();
+    dump(app, "Timeline (semaine)")?;
+    Ok(())
+}
+
+fn dump(app: &mut App, title: &str) -> Result<()> {
+    use ratatui::{backend::TestBackend, Terminal};
+    let mut term = Terminal::new(TestBackend::new(118, 34))?;
+    term.draw(|f| draw(f, app))?;
+    let buf = term.backend().buffer().clone();
+    println!("\n========== VUE : {title} ==========");
+    let area = buf.area();
+    for y in 0..area.height {
+        let mut line = String::new();
+        for x in 0..area.width {
+            line.push_str(buf[(x, y)].symbol());
         }
+        println!("{}", line.trim_end());
     }
     Ok(())
 }
@@ -65,6 +83,9 @@ fn run_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()
                     KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => app.next_view(),
                     KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => app.prev_view(),
                     KeyCode::Char(c @ '1'..='5') => app.set_view_digit(c),
+                    KeyCode::Char(']') | KeyCode::Char('+') => app.cycle_window(1),
+                    KeyCode::Char('[') | KeyCode::Char('-') => app.cycle_window(-1),
+                    KeyCode::Char('w') => app.toggle_gran(),
                     KeyCode::Down | KeyCode::Char('j') => app.scroll_down(),
                     KeyCode::Up | KeyCode::Char('k') => app.scroll_up(),
                     _ => {}
@@ -86,7 +107,7 @@ fn draw(f: &mut Frame, app: &mut App) {
         View::Projects => draw_projects(f, chunks[1], app),
         View::Cache => draw_cache(f, chunks[1], app),
     }
-    draw_footer(f, chunks[2]);
+    draw_footer(f, chunks[2], app);
 }
 
 fn draw_tabs(f: &mut Frame, area: Rect, app: &App) {
@@ -104,21 +125,34 @@ fn draw_tabs(f: &mut Frame, area: Rect, app: &App) {
                 .title(Span::styled(
                     " cc-cost · estimateur coût API Claude Code ",
                     Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-                )),
+                ))
+                .title_top(
+                    ratatui::text::Line::from(Span::styled(
+                        format!(" période : {} ", app.window.label()),
+                        Style::default().fg(MONEY).add_modifier(Modifier::BOLD),
+                    ))
+                    .right_aligned(),
+                ),
         )
         .highlight_style(Style::default().fg(Color::Black).bg(ACCENT).add_modifier(Modifier::BOLD))
         .divider(Span::styled("│", Style::default().fg(DIM)));
     f.render_widget(tabs, area);
 }
 
-fn draw_footer(f: &mut Frame, area: Rect) {
+fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
+    let key = |s: &'static str| Span::styled(s, Style::default().fg(ACCENT).add_modifier(Modifier::BOLD));
+    let dim = |s: String| Span::styled(s, Style::default().fg(DIM));
     let spans = vec![
-        Span::styled(" q", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
-        Span::styled(" quitter  ", Style::default().fg(DIM)),
-        Span::styled("Tab/←→/1-5", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
-        Span::styled(" vues  ", Style::default().fg(DIM)),
-        Span::styled("j/k", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
-        Span::styled(" défiler", Style::default().fg(DIM)),
+        key(" q"),
+        dim(" quitter  ".into()),
+        key("Tab/←→/1-5"),
+        dim(" vues  ".into()),
+        key("[ ]"),
+        dim(format!(" période:{}  ", app.window.label())),
+        key("w"),
+        dim(format!(" gran:{}  ", app.gran.label())),
+        key("j/k"),
+        dim(" défiler".into()),
     ];
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -137,40 +171,49 @@ fn block(title: &str) -> Block<'static> {
 
 fn draw_overview(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.total;
-    let days = match (app.first_day, app.last_day) {
+    let all = &app.all_time;
+    let all_days = match (app.all_first_day, app.all_last_day) {
         (Some(a), Some(b)) => (b - a).num_days() + 1,
         _ => 0,
     };
-    let top_model = app.by_model.first();
 
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(vec![
-        Span::styled("  COÛT API TOTAL ESTIMÉ   ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("  COÛT ({})   ", app.window.label()), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::styled(fmt_usd(t.cost), Style::default().fg(MONEY).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("     ·  tout temps : {}", fmt_usd(all.cost)), Style::default().fg(DIM)),
     ]));
     lines.push(Line::from(""));
-    lines.push(kv("Période", format!(
-        "{} → {}  ({days} jours)",
-        app.first_day.map(|d| d.to_string()).unwrap_or_default(),
-        app.last_day.map(|d| d.to_string()).unwrap_or_default(),
+    lines.push(kv("Données complètes", format!(
+        "{} → {}  ({} jours) · {} msgs · {} fichiers",
+        app.all_first_day.map(|d| d.to_string()).unwrap_or_default(),
+        app.all_last_day.map(|d| d.to_string()).unwrap_or_default(),
+        all_days,
+        fmt_int(all.requests),
+        fmt_int(app.files as u64),
     )));
+    lines.push(kv("Dédup / exclus", format!(
+        "{} doublons ignorés · {} synthetic exclus",
+        fmt_int(app.dropped_dupes as u64),
+        fmt_int(app.skipped as u64),
+    )));
+
+    lines.push(Line::from(Span::styled("  ──────── rythme (fenêtre courante) ────────", Style::default().fg(DIM))));
     lines.push(kv("Messages facturés", fmt_int(t.requests)));
-    lines.push(kv(
-        "Données",
-        format!(
-            "{} fichiers · {} doublons ignorés · {} synthetic exclus",
-            fmt_int(app.files as u64),
-            fmt_int(app.dropped_dupes as u64),
-            fmt_int(app.skipped as u64),
-        ),
-    ));
-    lines.push(Line::from(Span::styled("  ──────── tokens ────────", Style::default().fg(DIM))));
-    lines.push(kv("Input (frais)", fmt_tokens(t.input)));
-    lines.push(kv("Output", fmt_tokens(t.output)));
+    lines.push(kv("Jours actifs", fmt_int(app.active_days() as u64)));
+    lines.push(kv("Moyenne/jour actif", fmt_usd(app.avg_per_active_day())));
+    if let Some(p) = app.peak_day() {
+        lines.push(kv("Jour le plus cher", format!("{} — {}", p.day, fmt_usd(p.agg.cost))));
+    }
+    lines.push(kv("Projection 30 j", format!("{} (au rythme moyen actuel)", fmt_usd(app.run_rate_30d()))));
+
+    lines.push(Line::from(Span::styled("  ──────── tokens (fenêtre) ────────", Style::default().fg(DIM))));
+    lines.push(kv("Input / Output", format!("{} / {}", fmt_tokens(t.input), fmt_tokens(t.output))));
     lines.push(kv("Cache write", format!("{} (5m {} · 1h {})", fmt_tokens(t.cache_create()), fmt_tokens(t.cache_5m), fmt_tokens(t.cache_1h))));
     lines.push(kv("Cache read", fmt_tokens(t.cache_read)));
     lines.push(kv("Total tokens", fmt_tokens(t.tokens_total())));
-    lines.push(Line::from(Span::styled("  ──────── fenêtres ────────", Style::default().fg(DIM))));
+
+    lines.push(Line::from(Span::styled("  ──────── repères (tout temps) ────────", Style::default().fg(DIM))));
     lines.push(Line::from(vec![
         Span::styled("  Aujourd'hui ", Style::default().fg(DIM)),
         Span::styled(fmt_usd(app.cost_today), Style::default().fg(MONEY)),
@@ -179,16 +222,18 @@ fn draw_overview(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("   30 j ", Style::default().fg(DIM)),
         Span::styled(fmt_usd(app.cost_30d), Style::default().fg(MONEY)),
     ]));
-    lines.push(kv(
-        "Économie cache",
-        format!(
-            "{}  ({:.0}% vs sans cache)",
-            fmt_usd(t.savings()),
-            if t.cost_no_cache > 0.0 { t.savings() / t.cost_no_cache * 100.0 } else { 0.0 }
-        ),
-    ));
-    if let Some(m) = top_model {
-        lines.push(kv("Modèle n°1", format!("{} — {}", m.model, fmt_usd(m.agg.cost))));
+    lines.push(kv("Économie cache", format!(
+        "{}  ({:.0}% vs sans cache)",
+        fmt_usd(t.savings()),
+        if t.cost_no_cache > 0.0 { t.savings() / t.cost_no_cache * 100.0 } else { 0.0 }
+    )));
+    if let Some(m) = app.by_model.first() {
+        let proj = app
+            .by_project
+            .first()
+            .map(|p| format!("   ·   projet n°1 : {} {}", short_path(&p.project), fmt_usd(p.agg.cost)))
+            .unwrap_or_default();
+        lines.push(kv("Modèle n°1", format!("{} — {}{}", m.model, fmt_usd(m.agg.cost), proj)));
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -202,13 +247,15 @@ fn draw_overview(f: &mut Frame, area: Rect, app: &App) {
         )));
     }
 
-    let p = Paragraph::new(lines).block(block("Vue d'ensemble")).wrap(Wrap { trim: false });
+    let p = Paragraph::new(lines)
+        .block(block(&format!("Vue d'ensemble — {}", app.window.label())))
+        .wrap(Wrap { trim: false });
     f.render_widget(p, area);
 }
 
 fn kv(key: &str, val: String) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("  {key:<20}"), Style::default().fg(DIM)),
+        Span::styled(format!("  {key:<22}"), Style::default().fg(DIM)),
         Span::styled(val, Style::default().fg(Color::White)),
     ])
 }
@@ -256,34 +303,53 @@ fn draw_models(f: &mut Frame, area: Rect, app: &App) {
 fn draw_timeline(f: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::vertical([Constraint::Length(9), Constraint::Min(0)]).split(area);
 
-    // Sparkline du coût quotidien (en centimes pour rester en u64).
-    let data: Vec<u64> = app.by_day.iter().map(|d| (d.agg.cost * 100.0) as u64).collect();
-    let max_day = app.by_day.iter().map(|d| d.agg.cost).fold(0.0_f64, f64::max);
+    let buckets = app.timeline_buckets(); // du plus ancien au plus récent
+    let data: Vec<u64> = buckets.iter().map(|(_, a)| (a.cost * 100.0) as u64).collect();
+    let max_bucket = buckets.iter().map(|(_, a)| a.cost).fold(0.0_f64, f64::max);
     let spark = Sparkline::default()
-        .block(block(&format!("Coût / jour — pic ${max_day:.2}")))
+        .block(block(&format!(
+            "Coût / {} — fenêtre {} · moy/jour actif {} · pic {}",
+            app.gran.label(),
+            app.window.label(),
+            fmt_usd(app.avg_per_active_day()),
+            fmt_usd(max_bucket),
+        )))
         .data(&data)
         .style(Style::default().fg(ACCENT));
     f.render_widget(spark, chunks[0]);
 
-    // Table : jours les plus récents en haut.
-    let header = Row::new(vec!["Jour", "Msgs", "Coût", "Tendance"])
+    // Cumul calculé en ordre chronologique, affiché récent en haut.
+    let mut running = 0.0;
+    let mut rows_data: Vec<(String, Agg, f64)> = Vec::with_capacity(buckets.len());
+    for (label, agg) in buckets.iter() {
+        running += agg.cost;
+        rows_data.push((label.clone(), agg.clone(), running));
+    }
+    let max = max_bucket.max(f64::MIN_POSITIVE);
+
+    let header = Row::new(vec!["Période", "Msgs", "Coût", "Cumul", "Tendance"])
         .style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD));
-    let max = app.by_day.iter().map(|d| d.agg.cost).fold(0.0_f64, f64::max).max(f64::MIN_POSITIVE);
-    let rows: Vec<Row> = app
-        .by_day
+    let rows: Vec<Row> = rows_data
         .iter()
         .rev()
-        .map(|d| {
+        .map(|(label, agg, cumul)| {
             Row::new(vec![
-                Cell::from(d.day.to_string()),
-                Cell::from(fmt_int(d.agg.requests)),
-                Cell::from(Span::styled(fmt_usd(d.agg.cost), Style::default().fg(MONEY))),
-                Cell::from(Span::styled(bar(d.agg.cost / max, 30), Style::default().fg(ACCENT))),
+                Cell::from(label.clone()),
+                Cell::from(fmt_int(agg.requests)),
+                Cell::from(Span::styled(fmt_usd(agg.cost), Style::default().fg(MONEY))),
+                Cell::from(Span::styled(fmt_usd(*cumul), Style::default().fg(DIM))),
+                Cell::from(Span::styled(bar(agg.cost / max, 24), Style::default().fg(ACCENT))),
             ])
         })
         .collect();
-    let widths = [Constraint::Length(12), Constraint::Length(8), Constraint::Length(12), Constraint::Min(20)];
-    render_table(f, chunks[1], "Détail par jour (récent en haut)", header, rows, &widths, app.selected);
+    let widths = [
+        Constraint::Length(16),
+        Constraint::Length(8),
+        Constraint::Length(12),
+        Constraint::Length(12),
+        Constraint::Min(20),
+    ];
+    render_table(f, chunks[1], &format!("Détail par {} (récent en haut)", app.gran.label()), header, rows, &widths, app.selected);
 }
 
 // --- Vue 4 : Projets ---
