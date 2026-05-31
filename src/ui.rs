@@ -96,9 +96,14 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('n') => app.next_view(),
         KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('p') => app.prev_view(),
         KeyCode::Char(c @ '1'..='5') => app.set_view_digit(c),
-        KeyCode::Char(']') | KeyCode::Char('+') => app.cycle_window(1),
-        KeyCode::Char('[') | KeyCode::Char('-') => app.cycle_window(-1),
-        KeyCode::Char('w') => app.toggle_gran(),
+        // période : lettres uniquement (AZERTY-safe). `t` avance, `T` recule.
+        KeyCode::Char('t') => app.cycle_window(1),
+        KeyCode::Char('T') => app.cycle_window(-1),
+        // `w` saute sur Timeline et bascule jour/semaine — sinon effet invisible
+        KeyCode::Char('w') => {
+            app.view = View::Timeline;
+            app.toggle_gran();
+        }
         KeyCode::Down | KeyCode::Char('j') => app.scroll_down(),
         KeyCode::Up | KeyCode::Char('k') => app.scroll_up(),
         _ => {}
@@ -153,16 +158,16 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     let key = |s: &'static str| Span::styled(s, Style::default().fg(ACCENT).add_modifier(Modifier::BOLD));
     let dim = |s: String| Span::styled(s, Style::default().fg(DIM));
     let spans = vec![
-        key(" q"),
-        dim(" quitter  ".into()),
-        key("Tab/←→/1-5"),
-        dim(" vues  ".into()),
-        key("[ ]"),
+        key(" n p"),
+        dim(" vues (ou 1-5)  ".into()),
+        key("t"),
         dim(format!(" période:{}  ", app.window.label())),
         key("w"),
-        dim(format!(" gran:{}  ", app.gran.label())),
+        dim(format!(" timeline {}  ", app.gran.label())),
         key("j/k"),
-        dim(" défiler".into()),
+        dim(" défiler  ".into()),
+        key("q"),
+        dim(" quitter".into()),
     ];
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -579,20 +584,27 @@ mod tests {
     }
 
     #[test]
-    fn brackets_change_window() {
+    fn t_key_changes_window() {
         let mut a = test_app();
         assert_eq!(a.window, Window::All);
-        handle_key(&mut a, press(KeyCode::Char('[')));
-        assert_eq!(a.window, Window::D90, "'[' doit rétrécir la fenêtre");
-        handle_key(&mut a, press(KeyCode::Char(']')));
-        assert_eq!(a.window, Window::All, "']' doit élargir la fenêtre");
+        // 't' avance dans le cycle (All -> Today), 'T' recule
+        handle_key(&mut a, press(KeyCode::Char('t')));
+        assert_eq!(a.window, Window::Today, "'t' doit changer la fenêtre");
+        handle_key(&mut a, press(KeyCode::Char('T')));
+        assert_eq!(a.window, Window::All, "'T' doit revenir en arrière");
+        handle_key(&mut a, press(KeyCode::Char('T')));
+        assert_eq!(a.window, Window::D90, "'T' depuis Tout va à 90 jours");
     }
 
     #[test]
-    fn w_toggles_granularity() {
+    fn w_jumps_to_timeline_and_toggles_granularity() {
         let mut a = test_app();
+        assert_eq!(a.view, View::Overview);
         handle_key(&mut a, press(KeyCode::Char('w')));
-        assert!(matches!(a.gran, crate::app::Gran::Weekly));
+        assert_eq!(a.view, View::Timeline, "'w' doit afficher la Timeline");
+        assert!(matches!(a.gran, crate::app::Gran::Weekly), "'w' doit basculer en semaine");
+        handle_key(&mut a, press(KeyCode::Char('w')));
+        assert!(matches!(a.gran, crate::app::Gran::Daily), "2e 'w' revient au jour");
     }
 
     #[test]

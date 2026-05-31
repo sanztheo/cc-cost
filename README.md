@@ -91,16 +91,15 @@ Keybindings inside the TUI:
 
 | Key | Action |
 | --- | --- |
-| `1`–`5` | Jump directly to a view (Overview, Models, Timeline, Projects, Cache) |
-| `Tab` / `←` `→` / `n` `p` | Cycle between views |
-| `[` / `]` | Shrink / widen the time window (Today · 7d · 14d · 30d · 90d · All) |
-| `w` | Toggle Timeline granularity (daily / weekly) |
+| `1`–`5` / `n` `p` | Switch view (numbers jump directly; `n`/`p` cycle next/prev) |
+| `t` / `T` | Time window — `t` cycles forward, `T` backward (Today · 7d · 14d · 30d · 90d · All) |
+| `w` | Timeline daily ↔ weekly (jumps to the Timeline view) |
 | `j` / `k` | Scroll within the current view |
 | `q` | Quit |
 
-> Tip: if `Tab` and the arrow keys seem to do nothing, your terminal multiplexer (tmux, cmux, screen…) is intercepting them. The number keys `1`–`5` are never intercepted — use those to switch views.
+> All shortcuts are plain letters and numbers — no `Option`/`Alt`, so they work the same on AZERTY and QWERTY. `Tab` and the arrow keys also navigate, but a terminal multiplexer (tmux, cmux, screen…) may swallow them; the letter/number keys never get intercepted.
 
-The selected time window applies to **every** view at once — pick `30d` and the totals, model breakdown, timeline, projects, and cache savings all recompute for the last 30 days. The Overview also keeps fixed all-time reference points (today / 7d / 30d) and a 30-day run-rate projection.
+The selected time window applies to **every** view at once — press `t` to reach `30d` and the totals, model breakdown, timeline, projects, and cache savings all recompute for the last 30 days. The Overview also keeps fixed all-time reference points (today / 7d / 30d) and a 30-day run-rate projection.
 
 ### Where it looks
 
