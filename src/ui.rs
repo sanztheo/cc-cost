@@ -199,13 +199,17 @@ fn draw_overview(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(format!("     ·  tout temps : {}", fmt_usd(all.cost)), Style::default().fg(DIM)),
     ]));
     lines.push(Line::from(""));
-    lines.push(kv("Données complètes", format!(
+    lines.push(kv("Données sur disque", format!(
         "{} → {}  ({} jours) · {} msgs · {} fichiers",
         app.all_first_day.map(|d| d.to_string()).unwrap_or_default(),
         app.all_last_day.map(|d| d.to_string()).unwrap_or_default(),
         all_days,
         fmt_int(all.requests),
         fmt_int(app.files as u64),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  (« Tout » = transcripts encore présents ; Claude Code purge les vieilles sessions selon cleanupPeriodDays)",
+        Style::default().fg(DIM),
     )));
     lines.push(kv("Dédup / exclus", format!(
         "{} doublons ignorés · {} synthetic exclus",
